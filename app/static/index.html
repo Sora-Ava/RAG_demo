@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>RAG Agent 知识库助手</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<style>
+/* ── 全局变量 ──────────────────────────────────────────────────────────── */
+:root {
+  --bg-0: #0d1117;
+  --bg-1: #161b22;
+  --bg-2: #21262d;
+  --bg-3: #30363d;
+  --border: #30363d;
+  --text-0: #e6edf3;
+  --text-1: #8b949e;
+  --accent: #58a6ff;
+  --accent-dim: #1f4068;
+  --success: #3fb950;
+  --warn: #d29922;
+  --error: #f85149;
+  --user-bubble: #1c2a3a;
+  --agent-bubble: #1a1f27;
+  --radius: 12px;
+  --sidebar-w: 270px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; font-family: -apple-system, "Segoe UI", sans-serif; background: var(--bg-0); color: var(--text-0); font-size: 14px; }
+
+/* ── 布局 ─────────────────────────────────────────────────────────────── */
+.layout { display: flex; height: 100vh; overflow: hidden; }
+
+/* ── 侧边栏 ───────────────────────────────────────────────────────────── */
+.sidebar {
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  background: var(--bg-1);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 20px 16px;
+  gap: 20px;
+  overflow-y: auto;
+}
+.logo { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 700; color: var(--text-0); }
+.logo-icon { font-size: 24px; }
+
+/* 上传区 */
+.upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 20px 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: all .2s;
+  background: var(--bg-0);
+  position: relative;
+}
+.upload-zone:hover, .upload-zone.drag-over { border-color: var(--accent); background: var(--accent-dim); }
+.upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.upload-icon { font-size: 28px; margin-bottom: 8px; }
+.upload-text { color: var(--text-1); font-size: 12px; line-height: 1.6; }
+.upload-text b { color: var(--accent); }
+
+/* 进度条 */
+.progress-wrap { display: none; flex-direction: column; gap: 6px; }
+.progress-wrap.show { display: flex; }
+.progress-bar { height: 4px; background: var(--bg-3); border-radius: 2px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width .3s; }
+.progress-label { font-size: 11px; color: var(--text-1); }
+
+/* 知识库状态 */
+.kb-status { background: var(--bg-2); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.kb-title { font-size: 12px; font-weight: 600; color: var(--text-1); text-transform: uppercase; letter-spacing: .5px; }
+.kb-stat { display: flex; justify-content: space-between; align-items: center; }
+.kb-stat-label { color: var(--text-1); font-size: 12px; }
+.kb-stat-val { font-weight: 700; color: var(--accent); font-size: 15px; }
+.btn-clear {
+  width: 100%;
+  padding: 8px;
+  background: transparent;
+  border: 1px solid var(--error);
+  color: var(--error);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all .2s;
+}
+.btn-clear:hover { background: rgba(248,81,73,.15); }
+
+/* 工具列表 */
+.tools-section { display: flex; flex-direction: column; gap: 8px; }
+.tools-title { font-size: 12px; font-weight: 600; color: var(--text-1); text-transform: uppercase; letter-spacing: .5px; }
+.tool-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--bg-2); border-radius: 8px; }
+.tool-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); flex-shrink: 0; }
+.tool-name { font-size: 12px; color: var(--text-0); }
+
+/* 新对话按钮 */
+.btn-new {
+  width: 100%;
+  padding: 10px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: opacity .2s;
+}
+.btn-new:hover { opacity: .85; }
+
+/* ── 主区域 ───────────────────────────────────────────────────────────── */
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+/* 顶栏 */
+.topbar {
+  height: 52px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-1);
+  flex-shrink: 0;
+}
+.topbar-title { font-size: 15px; font-weight: 600; }
+.session-badge { font-size: 11px; color: var(--text-1); background: var(--bg-2); padding: 3px 10px; border-radius: 20px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 消息区 */
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  scroll-behavior: smooth;
+}
+.messages::-webkit-scrollbar { width: 4px; }
+.messages::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 2px; }
+
+/* 欢迎屏 */
+.welcome {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--text-1);
+  padding: 40px;
+  text-align: center;
+}
+.welcome-icon { font-size: 56px; }
+.welcome h2 { font-size: 20px; color: var(--text-0); }
+.welcome p { font-size: 13px; line-height: 1.7; max-width: 380px; }
+
+/* 消息气泡 */
+.msg-row { padding: 6px 20px; display: flex; flex-direction: column; }
+.msg-row.user { align-items: flex-end; }
+.msg-row.agent { align-items: flex-start; }
+
+.msg-bubble {
+  max-width: 72%;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  line-height: 1.65;
+  font-size: 13.5px;
+  word-break: break-word;
+}
+.msg-row.user .msg-bubble { background: var(--user-bubble); border-bottom-right-radius: 4px; }
+.msg-row.agent .msg-bubble { background: var(--agent-bubble); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+
+/* Markdown 渲染 */
+.msg-bubble h1,.msg-bubble h2,.msg-bubble h3 { margin: 12px 0 6px; line-height: 1.3; }
+.msg-bubble h2 { font-size: 15px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.msg-bubble h3 { font-size: 13.5px; }
+.msg-bubble p { margin: 6px 0; }
+.msg-bubble ul,.msg-bubble ol { padding-left: 20px; margin: 6px 0; }
+.msg-bubble li { margin: 3px 0; }
+.msg-bubble code { background: var(--bg-3); padding: 1px 5px; border-radius: 4px; font-size: 12px; font-family: monospace; }
+.msg-bubble pre { background: var(--bg-0); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow-x: auto; margin: 8px 0; }
+.msg-bubble pre code { background: none; padding: 0; font-size: 12px; }
+.msg-bubble table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 12px; }
+.msg-bubble th,.msg-bubble td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+.msg-bubble th { background: var(--bg-2); }
+.msg-bubble hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+.msg-bubble strong { color: var(--text-0); }
+.msg-bubble a { color: var(--accent); }
+
+/* 标签行（工具 + 引用） */
+.msg-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; max-width: 72%; }
+.msg-row.user .msg-meta { justify-content: flex-end; }
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 20px;
+  cursor: default;
+}
+.tag-tool { background: rgba(88,166,255,.12); color: var(--accent); border: 1px solid rgba(88,166,255,.3); }
+.tag-cite { background: rgba(63,185,80,.1); color: var(--success); border: 1px solid rgba(63,185,80,.3); cursor: pointer; }
+.tag-cite:hover { background: rgba(63,185,80,.2); }
+
+/* 打字光标 */
+.typing { display: inline-flex; gap: 4px; padding: 4px 0; }
+.typing span { width: 6px; height: 6px; background: var(--text-1); border-radius: 50%; animation: blink 1.2s infinite; }
+.typing span:nth-child(2) { animation-delay: .2s; }
+.typing span:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%,80%,100%{opacity:.2} 40%{opacity:1} }
+
+/* 引用抽屉 */
+.cite-drawer {
+  position: fixed;
+  right: 0; top: 0; bottom: 0;
+  width: 340px;
+  background: var(--bg-1);
+  border-left: 1px solid var(--border);
+  transform: translateX(100%);
+  transition: transform .3s;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+}
+.cite-drawer.open { transform: translateX(0); }
+.cite-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: 600; }
+.cite-close { background: none; border: none; color: var(--text-1); cursor: pointer; font-size: 18px; line-height: 1; }
+.cite-close:hover { color: var(--text-0); }
+.cite-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.cite-card { background: var(--bg-2); border-radius: 10px; padding: 14px; border: 1px solid var(--border); }
+.cite-card-header { display: flex; justify-content: space-between; margin-bottom: 8px; }
+.cite-source { font-size: 12px; font-weight: 600; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+.cite-page { font-size: 11px; background: var(--bg-3); padding: 2px 8px; border-radius: 10px; color: var(--text-1); }
+.cite-text { font-size: 12px; color: var(--text-1); line-height: 1.6; }
+
+/* 输入栏 */
+.input-bar {
+  border-top: 1px solid var(--border);
+  padding: 16px 20px;
+  background: var(--bg-1);
+  flex-shrink: 0;
+}
+.input-inner {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  transition: border-color .2s;
+}
+.input-inner:focus-within { border-color: var(--accent); }
+#user-input {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--text-0);
+  font-size: 14px;
+  resize: none;
+  outline: none;
+  max-height: 140px;
+  line-height: 1.5;
+  font-family: inherit;
+  padding: 2px 0;
+}
+#user-input::placeholder { color: var(--text-1); }
+.send-btn {
+  width: 36px; height: 36px;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: opacity .2s;
+}
+.send-btn:disabled { opacity: .4; cursor: not-allowed; }
+.send-btn:not(:disabled):hover { opacity: .85; }
+.send-btn svg { width: 16px; height: 16px; fill: #fff; }
+
+/* toast 通知 */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(80px);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text-0);
+  padding: 10px 20px;
+  border-radius: 30px;
+  font-size: 13px;
+  transition: transform .3s;
+  z-index: 200;
+  pointer-events: none;
+}
+.toast.show { transform: translateX(-50%) translateY(0); }
+.toast.success { border-color: var(--success); color: var(--success); }
+.toast.error { border-color: var(--error); color: var(--error); }
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+  <!-- ── 侧边栏 ─────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="logo">
+      <span class="logo-icon">🤖</span>
+      <span>RAG Agent</span>
+    </div>
+
+    <!-- 新对话 -->
+    <button class="btn-new" onclick="newSession()">＋ 新对话</button>
+
+    <!-- 上传文档 -->
+    <div>
+      <div style="font-size:12px;font-weight:600;color:var(--text-1);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">📄 上传文档</div>
+      <div class="upload-zone" id="upload-zone"
+           ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+        <input type="file" id="file-input" accept=".pdf,.docx,.doc,.txt" onchange="uploadFile(this.files[0])"/>
+        <div class="upload-icon">📂</div>
+        <div class="upload-text">
+          <b>点击选择</b>或拖拽文件到此处<br/>
+          支持 PDF · Word · TXT
+        </div>
+      </div>
+      <div class="progress-wrap" id="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        <div class="progress-label" id="progress-label">上传中…</div>
+      </div>
+    </div>
+
+    <!-- 知识库状态 -->
+    <div class="kb-status">
+      <div class="kb-title">📚 知识库</div>
+      <div class="kb-stat">
+        <span class="kb-stat-label">文档片段</span>
+        <span class="kb-stat-val" id="chunk-count">—</span>
+      </div>
+      <button class="btn-clear" onclick="clearKB()">🗑 清空知识库</button>
+    </div>
+
+    <!-- 工具列表 -->
+    <div class="tools-section">
+      <div class="tools-title">🔧 可用工具</div>
+      <div id="tools-list">
+        <div class="tool-item"><div class="tool-dot"></div><div class="tool-name">加载中…</div></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── 主区域 ──────────────────────────────────────────── -->
+  <div class="main">
+
+    <!-- 顶栏 -->
+    <div class="topbar">
+      <span class="topbar-title">企业知识库对话</span>
+      <span class="session-badge" id="session-display">未开始会话</span>
+    </div>
+
+    <!-- 消息区 -->
+    <div class="messages" id="messages">
+      <div class="welcome" id="welcome">
+        <div class="welcome-icon">💬</div>
+        <h2>开始与知识库对话</h2>
+        <p>先在左侧上传文档，然后直接提问。<br/>Agent 会自动检索相关内容并附上引用来源。</p>
+        <p style="margin-top:8px;font-size:12px;">也可以直接问天气、发起 HTTP 查询等。</p>
+      </div>
+    </div>
+
+    <!-- 输入栏 -->
+    <div class="input-bar">
+      <div class="input-inner">
+        <textarea id="user-input" rows="1" placeholder="输入消息，Shift+Enter 换行，Enter 发送…"
+          oninput="autoResize(this)"
+          onkeydown="handleKey(event)"></textarea>
+        <button class="send-btn" id="send-btn" onclick="sendMessage()">
+          <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+        </button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- 引用抽屉 -->
+<div class="cite-drawer" id="cite-drawer">
+  <div class="cite-header">
+    <span>📎 引用来源</span>
+    <button class="cite-close" onclick="closeCiteDrawer()">✕</button>
+  </div>
+  <div class="cite-body" id="cite-body"></div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ── 状态 ──────────────────────────────────────────────────────────────────
+let sessionId = null;
+let isLoading = false;
+let currentCitations = [];
+
+// ── 初始化 ────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  loadTools();
+  loadKBStatus();
+  setInterval(loadKBStatus, 10000);
+  marked.setOptions({ breaks: true, gfm: true });
+});
+
+// ── 工具列表 ──────────────────────────────────────────────────────────────
+async function loadTools() {
+  try {
+    const r = await fetch('/tools');
+    const data = await r.json();
+    const ICONS = { rag_search: '🔍', weather_query: '🌤', http_request: '🌐' };
+    document.getElementById('tools-list').innerHTML = data.tools.map(t => `
+      <div class="tool-item">
+        <div class="tool-dot"></div>
+        <div class="tool-name">${ICONS[t.name] || '⚙️'} ${t.name}</div>
+      </div>`).join('');
+  } catch(e) { /* ignore */ }
+}
+
+// ── 知识库状态 ────────────────────────────────────────────────────────────
+async function loadKBStatus() {
+  try {
+    const r = await fetch('/health');
+    const data = await r.json();
+    document.getElementById('chunk-count').textContent = data.knowledge_base_chunks;
+  } catch(e) { /* ignore */ }
+}
+
+// ── 上传文档 ──────────────────────────────────────────────────────────────
+function onDragOver(e) { e.preventDefault(); document.getElementById('upload-zone').classList.add('drag-over'); }
+function onDragLeave(e) { document.getElementById('upload-zone').classList.remove('drag-over'); }
+function onDrop(e) {
+  e.preventDefault();
+  document.getElementById('upload-zone').classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) uploadFile(file);
+}
+
+async function uploadFile(file) {
+  if (!file) return;
+  const allowed = ['.pdf','.docx','.doc','.txt'];
+  if (!allowed.some(ext => file.name.toLowerCase().endsWith(ext))) {
+    showToast('仅支持 PDF · Word · TXT', 'error'); return;
+  }
+  const pw = document.getElementById('progress-wrap');
+  const pf = document.getElementById('progress-fill');
+  const pl = document.getElementById('progress-label');
+  pw.classList.add('show');
+  pl.textContent = `上传中：${file.name}`;
+  pf.style.width = '0%';
+
+  // 模拟进度动画
+  let prog = 0;
+  const tick = setInterval(() => { prog = Math.min(prog + 8, 85); pf.style.width = prog + '%'; }, 200);
+
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch('/upload', { method: 'POST', body: fd });
+    clearInterval(tick);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || '上传失败');
+    pf.style.width = '100%';
+    pl.textContent = `✅ ${file.name} 入库成功，新增 ${data.chunks_added} 个片段`;
+    showToast(`📄 ${file.name} 已入库（${data.chunks_added} 片段）`, 'success');
+    loadKBStatus();
+    setTimeout(() => pw.classList.remove('show'), 3000);
+  } catch(e) {
+    clearInterval(tick);
+    pf.style.width = '100%';
+    pf.style.background = 'var(--error)';
+    pl.textContent = `❌ ${e.message}`;
+    showToast(e.message, 'error');
+    setTimeout(() => { pw.classList.remove('show'); pf.style.background = ''; }, 3000);
+  }
+  document.getElementById('file-input').value = '';
+}
+
+// ── 清空知识库 ────────────────────────────────────────────────────────────
+async function clearKB() {
+  if (!confirm('确认清空知识库？此操作不可撤销。')) return;
+  try {
+    await fetch('/clear', { method: 'DELETE' });
+    showToast('知识库已清空', 'success');
+    loadKBStatus();
+  } catch(e) { showToast('清空失败', 'error'); }
+}
+
+// ── 新对话 ────────────────────────────────────────────────────────────────
+function newSession() {
+  sessionId = null;
+  document.getElementById('messages').innerHTML = `
+    <div class="welcome" id="welcome">
+      <div class="welcome-icon">💬</div>
+      <h2>开始与知识库对话</h2>
+      <p>先在左侧上传文档，然后直接提问。<br/>Agent 会自动检索相关内容并附上引用来源。</p>
+      <p style="margin-top:8px;font-size:12px;">也可以直接问天气、发起 HTTP 查询等。</p>
+    </div>`;
+  document.getElementById('session-display').textContent = '未开始会话';
+  closeCiteDrawer();
+}
+
+// ── 发送消息 ──────────────────────────────────────────────────────────────
+async function sendMessage() {
+  const input = document.getElementById('user-input');
+  const text = input.value.trim();
+  if (!text || isLoading) return;
+
+  // 隐藏欢迎屏
+  const welcome = document.getElementById('welcome');
+  if (welcome) welcome.remove();
+
+  // 渲染用户消息
+  appendMessage('user', text);
+  input.value = '';
+  input.style.height = '';
+
+  // 渲染 loading
+  const loadingId = appendLoading();
+  setLoading(true);
+
+  try {
+    const payload = { message: text };
+    if (sessionId) payload.session_id = sessionId;
+
+    const r = await fetch('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || '请求失败');
+
+    sessionId = data.session_id;
+    document.getElementById('session-display').textContent = 'Session: ' + sessionId.slice(0,18) + '…';
+
+    removeLoading(loadingId);
+    appendAgentMessage(data.answer, data.citations || [], data.tools_used || []);
+    currentCitations = data.citations || [];
+  } catch(e) {
+    removeLoading(loadingId);
+    appendMessage('agent', `❌ 请求失败：${e.message}`);
+    showToast(e.message, 'error');
+  }
+  setLoading(false);
+}
+
+// ── 渲染消息 ──────────────────────────────────────────────────────────────
+function appendMessage(role, text) {
+  const row = document.createElement('div');
+  row.className = `msg-row ${role}`;
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  bubble.innerHTML = role === 'agent'
+    ? marked.parse(text)
+    : escapeHtml(text).replace(/\n/g,'<br/>');
+  row.appendChild(bubble);
+  document.getElementById('messages').appendChild(row);
+  scrollBottom();
+  return row;
+}
+
+function appendAgentMessage(answer, citations, toolsUsed) {
+  const row = document.createElement('div');
+  row.className = 'msg-row agent';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  bubble.innerHTML = marked.parse(answer);
+  row.appendChild(bubble);
+
+  // 工具 + 引用 tags
+  if (toolsUsed.length > 0 || citations.length > 0) {
+    const meta = document.createElement('div');
+    meta.className = 'msg-meta';
+
+    const TOOL_ICONS = { rag_search:'🔍', weather_query:'🌤', http_request:'🌐' };
+    toolsUsed.forEach(t => {
+      const tag = document.createElement('span');
+      tag.className = 'tag tag-tool';
+      tag.textContent = (TOOL_ICONS[t]||'⚙️') + ' ' + t;
+      meta.appendChild(tag);
+    });
+
+    if (citations.length > 0) {
+      const tag = document.createElement('span');
+      tag.className = 'tag tag-cite';
+      tag.textContent = `📎 ${citations.length} 条引用`;
+      tag.onclick = () => openCiteDrawer(citations);
+      meta.appendChild(tag);
+    }
+    row.appendChild(meta);
+  }
+
+  document.getElementById('messages').appendChild(row);
+  scrollBottom();
+}
+
+let _loadingCounter = 0;
+function appendLoading() {
+  const id = 'loading-' + (++_loadingCounter);
+  const row = document.createElement('div');
+  row.className = 'msg-row agent';
+  row.id = id;
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  bubble.innerHTML = `<div class="typing"><span></span><span></span><span></span></div>`;
+  row.appendChild(bubble);
+  document.getElementById('messages').appendChild(row);
+  scrollBottom();
+  return id;
+}
+function removeLoading(id) { document.getElementById(id)?.remove(); }
+
+// ── 引用抽屉 ──────────────────────────────────────────────────────────────
+function openCiteDrawer(citations) {
+  const body = document.getElementById('cite-body');
+  body.innerHTML = citations.map((c,i) => `
+    <div class="cite-card">
+      <div class="cite-card-header">
+        <span class="cite-source" title="${escapeHtml(c.source)}">${escapeHtml(c.source)}</span>
+        <span class="cite-page">第 ${c.page} 页</span>
+      </div>
+      <div class="cite-text">${escapeHtml(c.text || '')}${c.text && !c.text.endsWith('…') ? '…' : ''}</div>
+    </div>`).join('');
+  document.getElementById('cite-drawer').classList.add('open');
+}
+function closeCiteDrawer() { document.getElementById('cite-drawer').classList.remove('open'); }
+
+// ── 工具函数 ──────────────────────────────────────────────────────────────
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+function autoResize(el) {
+  el.style.height = '';
+  el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+}
+function setLoading(v) {
+  isLoading = v;
+  document.getElementById('send-btn').disabled = v;
+}
+function scrollBottom() {
+  const m = document.getElementById('messages');
+  m.scrollTop = m.scrollHeight;
+}
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function showToast(msg, type='') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (type ? ' '+type : '');
+  setTimeout(() => t.className = 'toast', 3000);
+}
+</script>
+</body>
+</html>
